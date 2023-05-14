@@ -67,8 +67,8 @@ namespace LMeter
 
             _commandManager.AddHandler("/lmdps", new CommandInfo(DPSReportCommand)
             {
-                HelpMessage = "Output current/selected encounter details to the current chat channel.\n"
-                            + "/lmdps <anything> → Output current encounter details via /echo",
+                HelpMessage = "Output current/selected encounter details via echo.\n"
+                            + "/lmdps <channel> → Output current/selected encounter details to channel. (party/fc only)",
                 ShowInHelp = true
             });
 
@@ -164,10 +164,18 @@ namespace LMeter
         private void DPSReportCommand(string command, string arguments)
         {
             Dalamud.Logging.PluginLog.Debug("Running dps report");
-            DPSReport(arguments.Trim().Length > 0);
+            DPSReport(channel(arguments.Trim().Split(" ")[0]));
         }
 
-        private void DPSReport(bool echo)
+        /// Return a supported channel from the given input, or null if the channel is not supported
+        private string? channel(string input) => input switch
+        {
+            "fc" => "fc",
+            "p" or "party" => "p",
+            _ => null
+        };
+
+        private void DPSReport(string? channel)
         {
             // Get the first meter that is for DPS and visible (to support selecting different encounters),
             // or get the first meter that is for DPS if they're all hidden
@@ -187,8 +195,8 @@ namespace LMeter
             // Exit if no event/encounter is found
             if (actEvent == null || encounter == null) return;
 
-            // Build echo string, prepare output string, prepare original macro content strings
-            string echoCommand = echo ? "/echo " : "";
+            // Build channel string, prepare output string, prepare original macro content strings
+            string channelCommand = channel != null ? $"/{channel}" : "/echo";
             string output = "";
             string original = "";
 
@@ -199,7 +207,7 @@ namespace LMeter
             );
 
             // Append encounter info to output
-            output += $"{echoCommand}{encounterInfo}\n";
+            output += $"{channelCommand} {encounterInfo}\n";
 
             // Get the sorted combatants from the meter
             List<Combatant> combatants = meter.GetSortedCombatants(actEvent, meter.GeneralConfig.DataType);
@@ -219,7 +227,7 @@ namespace LMeter
                     combatantInfo = combatantInfo.Replace(" [UKN]", "");
 
                 // Append combatant info to output
-                output += $"{echoCommand}{combatantInfo}\n";
+                output += $"{channelCommand} {combatantInfo}\n";
             }
 
             // Dalamud.Logging.PluginLog.Debug(output);
