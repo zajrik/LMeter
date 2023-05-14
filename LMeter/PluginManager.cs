@@ -202,7 +202,7 @@ namespace LMeter
 
             // Build encounter info string
             string encounterInfo = encounter.GetFormattedString(
-                "Encounter:   [title]   |   [duration]   |   [dps] group dps   |   [deaths] deaths",
+                "Encounter:   [title]   |   [duration]   |   [dps] group dps   |   [deaths] total deaths",
                 "N"
             );
 
