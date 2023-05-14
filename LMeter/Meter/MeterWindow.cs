@@ -60,6 +60,8 @@ namespace LMeter.Meter
             yield return this.VisibilityConfig;
         }
 
+        public int GetSelectedIndex() => _eventIndex;
+
         public void ImportPage(IConfigPage page)
         {
             switch (page)
@@ -95,7 +97,7 @@ namespace LMeter.Meter
             _lastSortedCombatants = new List<Combatant>();
             _lastSortedTimestamp = null;
         }
-        
+
         // Dont ask
         protected void UpdateDragData(Vector2 pos, Vector2 size, bool locked)
         {
@@ -155,7 +157,7 @@ namespace LMeter.Meter
                         this.GeneralConfig.Size = size;
                     }
                 }
-                
+
                 if (this.GeneralConfig.ShowBorder)
                 {
                     Vector2 borderPos = localPos;
@@ -195,11 +197,11 @@ namespace LMeter.Meter
         }
 
         private void DrawBars(ImDrawListPtr drawList, Vector2 localPos, Vector2 size, ACTEvent? actEvent)
-        {                
+        {
             if (actEvent?.Combatants is not null && actEvent.Combatants.Any())
             {
                 List<Combatant> sortedCombatants = this.GetSortedCombatants(actEvent, this.GeneralConfig.DataType);
-                
+
                 float top = this.GeneralConfig.DataType switch
                 {
                     MeterDataType.Damage => sortedCombatants[0].DamageTotal?.Value ?? 0,
@@ -235,12 +237,12 @@ namespace LMeter.Meter
                 }
             }
         }
-        
+
         private bool DrawContextMenu(string popupId, out int selectedIndex)
         {
             selectedIndex = -1;
             bool selected = false;
-            
+
             if (ImGui.BeginPopup(popupId))
             {
                 if (!ImGui.IsAnyItemActive() && !ImGui.IsMouseClicked(ImGuiMouseButton.Left))
@@ -274,7 +276,7 @@ namespace LMeter.Meter
                     Singletons.Get<PluginManager>().Clear();
                     selected = true;
                 }
-                
+
                 if (ImGui.Selectable("Configure"))
                 {
                     Singletons.Get<PluginManager>().ConfigureMeter(this);
@@ -287,7 +289,7 @@ namespace LMeter.Meter
             return selected;
         }
 
-        private List<Combatant> GetSortedCombatants(ACTEvent actEvent, MeterDataType dataType)
+        public List<Combatant> GetSortedCombatants(ACTEvent actEvent, MeterDataType dataType)
         {
             if (actEvent.Combatants is null ||
                 _lastSortedTimestamp.HasValue &&
@@ -316,7 +318,7 @@ namespace LMeter.Meter
                     MeterDataType.DamageTaken => y.DamageTaken?.Value ?? 0,
                     _ => 0
                 };
-                
+
                 return (int)(yFloat - xFloat);
             });
 

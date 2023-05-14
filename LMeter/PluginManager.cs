@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Numerics;
+using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Game.ClientState;
 using Dalamud.Game.Command;
 using Dalamud.Interface;
@@ -11,6 +13,9 @@ using LMeter.Config;
 using LMeter.Helpers;
 using LMeter.Meter;
 using LMeter.Windows;
+using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using FFXIVClientStructs.FFXIV.Client.UI.Shell;
+using FFXIVClientStructs.FFXIV.Client.System.String;
 
 namespace LMeter
 {
@@ -26,7 +31,7 @@ namespace LMeter
         private ConfigWindow _configRoot;
         private LMeterConfig _config;
 
-        private readonly ImGuiWindowFlags _mainWindowFlags = 
+        private readonly ImGuiWindowFlags _mainWindowFlags =
             ImGuiWindowFlags.NoTitleBar |
             ImGuiWindowFlags.NoScrollbar |
             ImGuiWindowFlags.AlwaysAutoResize |
@@ -50,18 +55,22 @@ namespace LMeter
             _windowSystem = new WindowSystem("LMeter");
             _windowSystem.AddWindow(_configRoot);
 
-            _commandManager.AddHandler(
-                "/lm",
-                new CommandInfo(PluginCommand)
-                {
-                    HelpMessage = "Opens the LMeter configuration window.\n"
-                                + "/lm end → Ends current ACT Encounter.\n"
-                                + "/lm clear → Clears all ACT encounter log data.\n"
-                                + "/lm ct <number> → Toggles clickthrough status for the given profile.\n"
-                                + "/lm toggle <number> [on|off] → Toggles visibility for the given profile.",
-                    ShowInHelp = true
-                }
-            );
+            _commandManager.AddHandler("/lm", new CommandInfo(PluginCommand)
+            {
+                HelpMessage = "Opens the LMeter configuration window.\n"
+                            + "/lm end → Ends current ACT Encounter.\n"
+                            + "/lm clear → Clears all ACT encounter log data.\n"
+                            + "/lm ct <number> → Toggles clickthrough status for the given profile.\n"
+                            + "/lm toggle <number> [on|off] → Toggles visibility for the given profile.",
+                ShowInHelp = true
+            });
+
+            _commandManager.AddHandler("/lmdps", new CommandInfo(DPSReportCommand)
+            {
+                HelpMessage = "Output current/selected encounter details to the current chat channel.\n"
+                            + "/lmdps <anything> → Output current encounter details via /echo",
+                ShowInHelp = true
+            });
 
             _clientState.Logout += OnLogout;
             _pluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
@@ -152,6 +161,104 @@ namespace LMeter
             }
         }
 
+        private void DPSReportCommand(string command, string arguments)
+        {
+            Dalamud.Logging.PluginLog.Debug("Running dps report");
+            DPSReport(arguments.Trim().Length > 0);
+        }
+
+        private void DPSReport(bool echo)
+        {
+            // Get the first meter that is for DPS and visible (to support selecting different encounters),
+            // or get the first meter that is for DPS if they're all hidden
+            MeterWindow? meter =
+                _config.MeterList.Meters.Find(
+                    m => m.VisibilityConfig.IsVisible() && m.GeneralConfig.DataType == MeterDataType.Damage
+                )
+                ?? _config.MeterList.Meters.Find(m => m.GeneralConfig.DataType == MeterDataType.Damage);
+
+            // Exit if no valid meter is found
+            if (meter == null) return;
+
+            // Get the selected event/encounter (current event if meter is hidden)
+            ACTEvent? actEvent = ACTClient.GetEvent(meter.GetSelectedIndex());
+            Encounter? encounter = actEvent?.Encounter;
+
+            // Exit if no event/encounter is found
+            if (actEvent == null || encounter == null) return;
+
+            // Build echo string, prepare output string, prepare original macro content strings
+            string echoCommand = echo ? "/echo " : "";
+            string output = "";
+            string original = "";
+
+            // Build encounter info string
+            string encounterInfo = encounter.GetFormattedString(
+                "Encounter:   [title]   |   [duration]   |   [dps] group dps   |   [deaths] deaths",
+                "N"
+            );
+
+            // Append encounter info to output
+            output += $"{echoCommand}{encounterInfo}\n";
+
+            // Get the sorted combatants from the meter
+            List<Combatant> combatants = meter.GetSortedCombatants(actEvent, meter.GeneralConfig.DataType);
+            List<Combatant> limitedCombatants = combatants.GetRange(0, Math.Min(combatants.Count, 10));
+
+            // Append combatant info to output for the first 10 combatants
+            foreach ((Combatant combatant, int i) in limitedCombatants.Select((c, i) => (c, i)))
+            {
+                // Build combatant info string
+                string combatantInfo = combatant.GetFormattedString(
+                    $"{i + 1}. [[job]] [name]:   [damagetotal] damage   |   [dps] dps   |   [damagepct]   |   [deaths] deaths",
+                    "N"
+                );
+
+                // Remove unknown job (easier than bothering to check job before adding it to info and I'm laaaaazy)
+                if (combatantInfo.Contains(" [UKN]"))
+                    combatantInfo = combatantInfo.Replace(" [UKN]", "");
+
+                // Append combatant info to output
+                output += $"{echoCommand}{combatantInfo}\n";
+            }
+
+            // Dalamud.Logging.PluginLog.Debug(output);
+
+            try
+            {
+                unsafe {
+                    // Get macro 99 from individual macros
+                    RaptureMacroModule.Macro* macro = RaptureMacroModule.Instance->GetMacro(0, 99);
+
+                    // Rebuild original macro text
+                    for (int i = 0; i <= 14; i++)
+                    {
+                        string linebreak = i < 14 ? "\n" : "";
+                        Utf8String* line = macro->Line[i];
+
+                        if (line == null) break;
+
+                        // Dalamud.Logging.PluginLog.Debug($"Original macro line {i + 1} content: \"{line->ToString()}\"");
+
+                        original += $"{line->ToString()}{linebreak}";
+                    }
+
+                    // Dalamud.Logging.PluginLog.Debug(original);
+
+                    // Set macro text and execute it
+                    RaptureMacroModule.Instance->ReplaceMacroLines(macro, Utf8String.FromString(output));
+                    RaptureShellModule.Instance->ExecuteMacro(macro);
+
+                    // Restore original macro text
+                    RaptureMacroModule.Instance->ReplaceMacroLines(macro, Utf8String.FromString(original));
+                }
+            }
+            catch (Exception ex)
+            {
+                Dalamud.Logging.PluginLog.Error(ex.ToString());
+            }
+        }
+
         private static int GetIntArg(string argument)
         {
             string[] args = argument.Split(" ");
@@ -197,6 +304,7 @@ namespace LMeter
                 _pluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
                 _clientState.Logout -= OnLogout;
                 _commandManager.RemoveHandler("/lm");
+                _commandManager.RemoveHandler("/lmdps");
                 _windowSystem.RemoveAllWindows();
             }
         }
